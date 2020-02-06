@@ -1,0 +1,3 @@
+[submodule "components/led_strip"]
+	path = components/led_strip
+	url = https://github.com/salas81/led_strip.git
