@@ -40,7 +40,9 @@ CHANGELOG
 #ifndef WS2812FX_h
 #define WS2812FX_h
 
-#include "neopixel.h"
+#include <stdlib.h>
+#include <stdbool.h>
+#include "led_strip.h"
 
 //#define LED_INBUILT_GPIO 2      // this is the onboard LED used to show on/off only
 

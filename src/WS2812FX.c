@@ -46,22 +46,22 @@ CHANGELOG
 
 #include "WS2812FX.h"
 #include <math.h>
-#include <stdlib.h>
 
-#include "FreeRTOS.h"
+#include <freertos/FreeRTOS.h>
 #include "freertos/task.h"
 
 #include <esp_log.h>
 #include "esp_event.h"	//	for usleep
 #include <string.h>
 
+#include "driver/rmt.h"
 
 #define CALL_MODE(n) _mode[n]();
 
-#define	NEOPIXEL_PORT                   22
-#define	NR_LED                          32
-#define	NEOPIXEL_WS2812
-#define	NEOPIXEL_RMT_CHANNEL            RMT_CHANNEL_2
+#define RMT_TX_CHANNEL 						RMT_CHANNEL_0
+#define WS2812_GPIO 						22
+#define WS2812_LED_NUMBER					32
+#define WS2812_TIMEOUT						100
 
 static const char *TAG = "ws2812_FX";
 
@@ -94,7 +94,9 @@ mode _mode[MODE_COUNT];
 
 // ws2812_pixel_t *pixels;
 
-pixel_settings_t px;
+led_strip_t *strip;
+
+// pixel_settings_t px;
 
 //Helpers
 uint32_t color32(uint8_t r, uint8_t g, uint8_t b) {
@@ -133,9 +135,7 @@ static uint32_t max(uint32_t a, uint32_t b) {
 
 //LED Adapter
 void WS2812_show(void) {
-	// ws2812_i2s_update(pixels, PIXEL_RGB);
-
-	// np_show(&px, NEOPIXEL_RMT_CHANNEL);
+	ESP_ERROR_CHECK(strip->refresh(strip, WS2812_TIMEOUT));
 }
 
 void WS2812_setPixelColor(uint16_t n, uint8_t r, uint8_t g, uint8_t b) {
@@ -143,18 +143,11 @@ void WS2812_setPixelColor(uint16_t n, uint8_t r, uint8_t g, uint8_t b) {
 		n = (_led_count - 1) - n; 
 	}
 
-	// ws2812_pixel_t px1;
-	// px1.red = map(r, 0, BRIGHTNESS_MAX, BRIGHTNESS_MIN, _brightness);
-	// px1.green = map(g, 0, BRIGHTNESS_MAX, BRIGHTNESS_MIN, _brightness);
-	// px1.blue = map(b, 0, BRIGHTNESS_MAX, BRIGHTNESS_MIN, _brightness);
-	
-	// pixels[n] = px1;
-
 	uint8_t red = map(r, 0, BRIGHTNESS_MAX, BRIGHTNESS_MIN, _brightness);
 	uint8_t green = map(g, 0, BRIGHTNESS_MAX, BRIGHTNESS_MIN, _brightness);
 	uint8_t blue = map(b, 0, BRIGHTNESS_MAX, BRIGHTNESS_MIN, _brightness);
 	
-	np_set_pixel_rgbw(&px, n, red, green, blue, 0);
+	ESP_ERROR_CHECK(strip->set_pixel(strip, n, (uint32_t)red, (uint32_t)green, (uint32_t)blue));
 }
 
 void WS2812_setPixelColor32(uint16_t n, uint32_t c) {
@@ -166,54 +159,36 @@ void WS2812_setPixelColor32(uint16_t n, uint32_t c) {
 }
 
 uint32_t WS2812_getPixelColor(uint16_t n) {
-	// uint32_t color = np_get_pixel_color(&px, n, NULL);
-	// return color32(pixels[n].red, pixels[n].green, pixels[n].blue);
-	return px.pixels[n];
+	uint8_t red = 0;
+	uint8_t green = 0;
+	uint8_t blue = 0;
+
+	ESP_ERROR_CHECK(strip->get_pixel(strip, n, &red, &green, &blue));
+
+	return color32(red, green, blue);
 }
 
 void WS2812_clear() {
-	for (int i = 0; i < _led_count; i++) {
-		WS2812_setPixelColor(i, 0, 0, 0);
-	}
-	// ws2812_i2s_update(pixels, PIXEL_RGB);
-	// np_show(&px, NEOPIXEL_RMT_CHANNEL);
-	WS2812_show();
+    ESP_ERROR_CHECK(strip->clear(strip, WS2812_TIMEOUT));
 }
 
 void WS2812_init(uint16_t pixel_count) {
-	_led_count = NR_LED;
-    // pixels = (ws2812_pixel_t*) malloc(_led_count * sizeof(ws2812_pixel_t));
+	_led_count = WS2812_LED_NUMBER;
+
+    rmt_config_t config = RMT_DEFAULT_CONFIG_TX(WS2812_GPIO, RMT_TX_CHANNEL);
+    // set counter clock to 40MHz
+    config.clk_div = 2;
+
+    ESP_ERROR_CHECK(rmt_config(&config));
+    ESP_ERROR_CHECK(rmt_driver_install(config.channel, 0, 0));
 	
-	uint32_t _pixels[NR_LED];
-	int i;
-	int rc;
+    // install ws2812 driver
+    led_strip_config_t strip_config = LED_STRIP_DEFAULT_CONFIG(WS2812_LED_NUMBER, (led_strip_dev_t)config.channel);
+    strip = led_strip_new_rmt_ws2812(&strip_config);
+    if (!strip) {
+        ESP_LOGE(TAG, "install WS2812 driver failed");
+    }
 
-	rc = neopixel_init(NEOPIXEL_PORT, NEOPIXEL_RMT_CHANNEL);
-	// ESP_LOGI(TAG, "neopixel_init rc = %d", rc);
-	usleep(1000*1000);
-
-	for	( i = 0 ; i < NR_LED ; i ++ )	{
-		_pixels[i] = 0;
-	}
-	px.pixels = (uint8_t *)_pixels;
-	px.pixel_count = NR_LED;
-
-	// strcpy(px.color_order, "GRBW");
-
-	memset(&px.timings, 0, sizeof(px.timings));
-	px.timings.mark.level0 = 1;
-	px.timings.space.level0 = 1;
-	px.timings.mark.duration0 = 12;
-
-	px.nbits = 32;
-	px.timings.mark.duration1 = 14;
-	px.timings.space.duration0 = 7;
-	px.timings.space.duration1 = 16;
-	px.timings.reset.duration0 = 600;
-	px.timings.reset.duration1 = 600;
-
-	px.brightness = 255;
-	
 	WS2812_clear();
 }
 
